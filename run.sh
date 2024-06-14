@@ -1,0 +1,6 @@
+python RAG_test.py --filepath "nq_1000_bge.json" --LLM "llama2_13b_chat" --contexts_type ["ori_fake","reranked_dense"] --whether_re_weighting True --whether_ideal_scores True --ideal_score 1 --modify_all_layers False --heads_topk 1188 --fake_num 2
+python RAG_test.py --filepath "nq_1000_bge.json" --LLM "llama2_13b_chat" --contexts_type ["ori_fake","reranked_dense"] --whether_re_weighting True --whether_ideal_scores True --ideal_score 1 --modify_all_layers False --heads_topk 1188 --fake_num 3
+
+python RAG_test.py --filepath "nq_1000_bge.json" --LLM "llama3" --contexts_type ["ori_fake","reranked_dense"] --whether_re_weighting True --whether_ideal_scores True --ideal_score 1 --modify_all_layers False --heads_topk 894 --fake_num 1
+python RAG_test.py --filepath "nq_1000_bge.json" --LLM "llama3" --contexts_type ["ori_fake","reranked_dense"] --whether_re_weighting True --whether_ideal_scores True --ideal_score 1 --modify_all_layers False --heads_topk 894 --fake_num 2
+python RAG_test.py --filepath "nq_1000_bge.json" --LLM "llama3" --contexts_type ["ori_fake","reranked_dense"] --whether_re_weighting True --whether_ideal_scores True --ideal_score 1 --modify_all_layers False --heads_topk 894 --fake_num 3
