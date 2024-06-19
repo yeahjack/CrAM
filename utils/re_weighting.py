@@ -149,22 +149,6 @@ class Find_Best_Heads(Re_Weighting_Strategy):
         self.model_num_attention_heads = self.model.config.num_attention_heads
         self.hidden_size = self.model.config.hidden_size
 
-    def save_hidden_state(self, module: torch.nn.Module, input_args: tuple, input_kwargs: dict, layer_idx: int):
-        self.ori_hidden_state.append(input_args[0].clone())
-
-    def change_hidden_state(self, module: torch.nn.Module, input_args: tuple, input_kwargs: dict, layer_idx: int, head_idx: int):
-        # attn_output=input_args[0]
-        start_idx = int(input_args[0].size()[-1] * head_idx / self.model_num_attention_heads)
-        end_idx = int(input_args[0].size()[-1] * (head_idx + 1) / self.model_num_attention_heads + 1)
-        input_args[0][:, :, start_idx:end_idx] = (self.ori_hidden_state[layer_idx][:, :, start_idx:end_idx].clone())
-        return input_args, input_kwargs
-
-    def add_noise(self, module: torch.nn.Module, input_args: tuple, input_kwargs: dict, start_idx: int, end_idx: int):
-        device = input_args[0].device
-        noise = torch.randn(1, end_idx - start_idx + 1, self.hidden_size).to(device=device)
-        input_args[0][:, start_idx:end_idx + 1, :] += noise
-        return input_args, input_kwargs
-
     @torch.no_grad()
     def cal_logits(self, question: str = '', paras: list = [], scores: list = [], right_answer: str = '', wrong_answer: str = 'my name is'):
         answer = wrong_answer
