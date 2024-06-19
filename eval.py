@@ -10,9 +10,6 @@ import numpy as np
 from collections import Counter
 
 
-# https://github.com/AkariAsai/self-rag/blob/main/retrieval_lm/metrics.py
-# https://github.com/panruotong/CAG/blob/main/metrics.py#L142
-# https://github.com/gankim/tree-of-clarifications/blob/main/dsp/utils/metrics.py
 def normalize_text(s):
     s = unicodedata.normalize('NFD', s)
 
