@@ -1,6 +1,6 @@
 # CrAM
 
-Welcome to the CrAM repository. This repository provides our code and data.
+This is the official repo of the paper [CrAM: Credibility-Aware Attention Modification in LLMs for Combating Misinformation in RAG](https://arxiv.org/abs/2406.11497) accepted to AAAI 2025. 
 
 ## Overview
 
