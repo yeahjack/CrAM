@@ -8,7 +8,7 @@ import torch
 from functools import partial
 from tqdm import tqdm
 import numpy as np
-from .prompt import get_prompt
+from prompt import get_prompt
 
 RAG_prompt1 = """Given the following information: \n"""
 RAG_prompt2 = """Answer the following question based on the given information or your internal knowledge with one or few words without the source.
@@ -173,3 +173,87 @@ class Find_Best_Heads(Re_Weighting_Strategy):
                     registered_hook.remove()
             prob_change.append(prob_change_layer)
         return prob_change
+
+if __name__ == "__main__":
+    # 导入必要的模块
+    import time
+    
+    # 初始化Re_Weighting_Strategy实例
+    # 注意：实际运行时，应该选择一个适合你计算资源的模型
+    model_name = "meta-llama/Llama-2-7b-chat-hf"  # 或者使用更小的模型以便快速演示
+    
+    print("正在加载模型，这可能需要几分钟时间...")
+    rag_strategy = Re_Weighting_Strategy(model_name=model_name)
+    
+    # 准备示例问题和相关段落
+    question = "谁是苹果公司的创始人？"
+    paras = [
+        "苹果公司（Apple Inc.）是由史蒂夫·乔布斯、史蒂夫·沃兹尼亚克和罗纳德·韦恩在1976年创立的美国跨国技术公司。",
+        "微软公司是由比尔·盖茨和保罗·艾伦于1975年创立的美国跨国技术公司。",
+        "史蒂夫·乔布斯（Steve Jobs，1955年2月24日－2011年10月5日）是苹果公司的联合创始人和前CEO。"
+    ]
+    # 段落的相关性分数（越高越相关）
+    scores = [0.8, 0.3, 0.9]
+    
+    print("\n===== 基本RAG演示 =====")
+    print(f"问题: {question}")
+    print("相关段落:")
+    for i, (para, score) in enumerate(zip(paras, scores)):
+        print(f"段落{i+1} (相关性: {score:.2f}): {para[:50]}...")
+    
+    # 运行基本的RAG过程
+    print("\n正在使用默认注意力头配置生成答案...")
+    start_time = time.time()
+    prompt, output = rag_strategy.run_RAG_with_attention_weighting(
+        question=question, paras=paras, scores=scores
+    )
+    end_time = time.time()
+    print(f"生成时间: {end_time - start_time:.2f}秒")
+    print(f"答案: {output}")
+    
+    print("\n===== 寻找最佳注意力头 =====")
+    # 使用Find_Best_Heads找出最有效的注意力头
+    print("正在评估不同注意力头的效果（这可能需要较长时间）...")
+    best_heads_finder = Find_Best_Heads(model_name=model_name)
+    
+    # 设置正确答案和错误答案用于评估
+    right_answer = "史蒂夫·乔布斯、史蒂夫·沃兹尼亚克和罗纳德·韦恩"
+    wrong_answer = "比尔·盖茨"
+    
+    start_time = time.time()
+    prob_changes = best_heads_finder.cal_logits(
+        question=question, paras=paras, scores=scores, 
+        right_answer=right_answer, wrong_answer=wrong_answer
+    )
+    end_time = time.time()
+    print(f"评估时间: {end_time - start_time:.2f}秒")
+    
+    # 找出影响最大的前5个头
+    flat_changes = [(layer, head, change) for layer, layer_changes in enumerate(prob_changes) 
+                   for head, change in enumerate(layer_changes)]
+    top_5_heads = sorted(flat_changes, key=lambda x: x[2], reverse=True)[:5]
+    
+    print("\n影响最大的5个注意力头:")
+    for layer, head, change in top_5_heads:
+        print(f"层: {layer}, 头: {head}, 变化量: {change:.4f}")
+    
+    # 使用最有效的头配置再次运行RAG
+    best_layers_to_be_modified = {layer: [head] for layer, head, _ in top_5_heads}
+    print("\n正在使用优化后的注意力头配置生成答案...")
+    
+    optimized_rag_strategy = Re_Weighting_Strategy(
+        model_name=model_name, 
+        layers_to_be_modified=best_layers_to_be_modified
+    )
+    
+    start_time = time.time()
+    prompt, optimized_output = optimized_rag_strategy.run_RAG_with_attention_weighting(
+        question=question, paras=paras, scores=scores
+    )
+    end_time = time.time()
+    print(f"生成时间: {end_time - start_time:.2f}秒")
+    print(f"优化后答案: {optimized_output}")
+    
+    print("\n===== 结果比较 =====")
+    print(f"默认配置答案: {output}")
+    print(f"优化后答案: {optimized_output}")

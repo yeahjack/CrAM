@@ -1,0 +1,7 @@
+*.pdf
+chat.py
+/data
+/.gradio
+/.vscode
+__pycache__
+results*/

@@ -1,0 +1,44 @@
+# SEPER Reduction Correlation Analysis
+
+## Correlations with SEPER Reduction (Ground Truth)
+
+### Pearson Correlations (Linear Relationship)
+- **Semantic Entropy Reduction**: 0.2596 (weak)
+- **Reranker Score**: 0.2343 (weak)
+- **Entropy Reduction**: 0.2128 (weak)
+- **Perplexity Reduction**: 0.0539 (weak)
+- **Retriever Score**: 0.0401 (weak)
+
+### Spearman Correlations (Monotonic Relationship)
+- **Semantic Entropy Reduction**: 0.1804 (weak)
+- **Reranker Score**: 0.1787 (weak)
+- **Entropy Reduction**: 0.1406 (weak)
+- **Perplexity Reduction**: 0.1250 (weak)
+- **Retriever Score**: 0.0230 (weak)
+
+### Distance Correlations (Non-linear Dependency)
+- **Reranker Score**: 0.2319 (weak)
+- **Semantic Entropy Reduction**: 0.2311 (weak)
+- **Entropy Reduction**: 0.1888 (weak)
+- **Perplexity Reduction**: 0.1135 (weak)
+- **Retriever Score**: 0.0894 (weak)
+
+## Retriever and Reranker Score Analysis
+
+### Retriever Score
+- Pearson: 0.0401 (weak)
+- Spearman: 0.0230 (weak)
+- Distance: 0.0894 (weak)
+
+### Reranker Score
+- Pearson: 0.2343 (weak)
+- Spearman: 0.1787 (weak)
+- Distance: 0.2319 (weak)
+
+## Summary
+
+- The strongest linear correlation (Pearson) with SEPER Reduction is from **Semantic Entropy Reduction** (0.2596).
+- The strongest rank correlation (Spearman) with SEPER Reduction is from **Semantic Entropy Reduction** (0.1804).
+- The strongest non-linear dependency (Distance) with SEPER Reduction is from **Reranker Score** (0.2319).
+
+The Reranker Score (0.2343) has a stronger correlation with SEPER Reduction than the Retriever Score (0.0401).

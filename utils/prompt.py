@@ -1,4 +1,4 @@
-from .prompts_templates import *
+from prompts_templates import *
 
 
 def get_prompt(context: list = [], question: str = '', answer: str = '', type: str = 'with_contexts', scores: list = []):
