@@ -1,9 +1,9 @@
 import argparse
 import json
 import os
-import torch
 from typing import List, Dict, Any, Optional, Tuple
 from tqdm import tqdm
+import numpy as np
 
 # Import vLLM instead of transformers
 from vllm import LLM, SamplingParams
@@ -40,11 +40,70 @@ from lm_polygraph.stat_calculators.semantic_matrix import SemanticMatrixCalculat
 from lm_polygraph.stat_calculators.semantic_classes import SemanticClassesCalculator
 from lm_polygraph.stat_calculators.greedy_probs import GreedyProbsCalculator
 from lm_polygraph.stat_calculators.sample import SamplingGenerationCalculator
+from lm_polygraph.stat_calculators.entropy import EntropyCalculator
+from lm_polygraph.stat_calculators.prompt import PromptCalculator
 from lm_polygraph.utils.dataset import Dataset
 from lm_polygraph.utils.manager import UEManager
 from lm_polygraph.defaults.register_default_stat_calculators import register_default_stat_calculators
 from lm_polygraph.utils.builder_enviroment_stat_calculator import BuilderEnvironmentStatCalculator
+import time
+import functools
+from typing import List, Dict, Any, Callable
 
+def time_calculator(func: Callable) -> Callable:
+    """测量计算器方法执行时间的装饰器。"""
+    @functools.wraps(func)
+    def wrapper(self, deps: Dict[str, Any], texts: List[str], model: Any) -> Dict[str, Any]:
+        start_time = time.time()
+        result = func(self, deps, texts, model)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"{func.__name__} 执行时间: {execution_time:.4f} 秒")
+        return result
+    return wrapper
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (np.integer)):
+            return int(obj)
+        elif isinstance(obj, (np.floating)):
+            return float(obj)
+        elif isinstance(obj, (np.ndarray)):
+            return obj.tolist()
+        # Handle infinity and NaN values
+        elif obj == float('inf'):
+            return "Infinity"
+        elif obj == float('-inf'):
+            return "-Infinity"
+        elif np.isnan(obj):
+            return "NaN"
+        return super().default(obj)
+
+
+def json_infinity_decoder(obj):
+    """Custom object hook for json.loads to convert string representations of infinity back to float."""
+    for key, value in obj.items():
+        if isinstance(value, str):
+            if value == "Infinity":
+                obj[key] = float('inf')
+            elif value == "-Infinity":
+                obj[key] = float('-inf')
+            elif value == "NaN":
+                obj[key] = float('nan')
+    return obj
+
+
+def load_dataset(file_path: str) -> List[Dict[str, Any]]:
+    """Load dataset from a JSON file with support for Infinity values."""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f, object_hook=json_infinity_decoder)
+    return data
+
+
+def save_json_with_infinity(data, file_path: str) -> None:
+    """Save data to a JSON file with support for Infinity values."""
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False, cls=NumpyEncoder)
 
 class VLLMModel:
     """Handles direct interaction with vLLM models."""
@@ -52,8 +111,8 @@ class VLLMModel:
     def __init__(
         self,
         model_name: str,
-        device: str = "cuda:0",
-        max_tokens: int = 512,
+        device: str = "cuda",
+        max_tokens: int = 128,
         temperature: float = 0.0,
         gpu_memory_utilization: float = 0.7,
     ):
@@ -88,7 +147,7 @@ class VLLMModel:
         self.sampling_params = SamplingParams(
             max_tokens=self.max_tokens,
             temperature=self.temperature,
-            logprobs=20  # Need logprobs for uncertainty estimation
+            logprobs=20,  # Need logprobs for uncertainty estimation
         )
         
         # Create WhiteboxModelvLLM for lm_polygraph
@@ -167,7 +226,7 @@ class PolygraphCalculator:
         self.batch_size = batch_size
         
         # Set up NLI model for semantic metrics
-        self.nli_model = Deberta(device='cuda:1')
+        self.nli_model = Deberta(device='cuda:1', batch_size=5)
         self.nli_model.setup()
         
         self.initialize_estimators()
@@ -176,11 +235,13 @@ class PolygraphCalculator:
         """Initialize all uncertainty estimators from lm_polygraph."""
         # Initialize stat calculators for vLLM
         self.calc_infer_llm = GreedyProbsCalculator()
-        self.calc_nli = GreedyAlternativesNLICalculator(nli_model=self.nli_model)
+        self.calc_nli = GreedyAlternativesNLICalculator(nli_model=self.nli_model, batch_size=300)
         self.calc_samples = SamplingGenerationCalculator()
-        self.calc_cross_encoder = CrossEncoderSimilarityMatrixCalculator()
-        self.calc_semantic_matrix = SemanticMatrixCalculator(nli_model=self.nli_model)
+        self.calc_cross_encoder = CrossEncoderSimilarityMatrixCalculator(device='cuda:3', batch_size=100)
+        self.calc_semantic_matrix = SemanticMatrixCalculator(nli_model=self.nli_model, batch_size=2)
         self.calc_semantic_classes = SemanticClassesCalculator()
+        self.calc_entropy = EntropyCalculator()
+        self.calc_prompt = PromptCalculator()
         
         # Initialize estimators
         self.estimators = [
@@ -212,19 +273,32 @@ class PolygraphCalculator:
         results = []
         
         # Process in batches
-        for i in range(0, len(prompts), self.batch_size):
+        for i in tqdm(range(0, len(prompts), self.batch_size), desc="Processing scenarios in texts", total=len(prompts) // self.batch_size, leave=False):
             batch = prompts[i:i+self.batch_size]
             
             # Initialize dependencies with input texts
             deps = {"input_texts": batch}
             
-            # Run through all calculators
-            deps.update(self.calc_infer_llm(deps, texts=batch, model=self.vllm_model.model))
-            deps.update(self.calc_nli(deps, texts=batch, model=self.vllm_model.model))
-            deps.update(self.calc_samples(deps, texts=batch, model=self.vllm_model.model))
-            deps.update(self.calc_cross_encoder(deps, texts=batch, model=self.vllm_model.model))
-            deps.update(self.calc_semantic_matrix(deps, texts=batch, model=self.vllm_model.model))
-            deps.update(self.calc_semantic_classes(deps, texts=batch, model=self.vllm_model.model))
+            # 测量每个计算器的执行时间
+            calculators = [
+                ("calc_infer_llm", lambda: self.calc_infer_llm(deps, texts=batch, model=self.vllm_model.model)),
+                ("calc_nli", lambda: self.calc_nli(deps, texts=batch, model=self.vllm_model.model)),
+                ("calc_samples", lambda: self.calc_samples(deps, texts=batch, model=self.vllm_model.model)),
+                ("calc_cross_encoder", lambda: self.calc_cross_encoder(deps, texts=batch, model=self.vllm_model.model)),
+                ("calc_semantic_matrix", lambda: self.calc_semantic_matrix(deps, texts=batch, model=self.vllm_model.model)),
+                ("calc_semantic_classes", lambda: self.calc_semantic_classes(deps, texts=batch, model=self.vllm_model.model)),
+                ("calc_entropy", lambda: self.calc_entropy(deps, texts=batch, model=self.vllm_model.model)),
+                ("calc_prompt", lambda: self.calc_prompt(deps, texts=batch, model=self.vllm_model.model)),
+            ]
+            
+            for name, calculator in tqdm(calculators):
+                tqdm.write(f"Calculating {name}...")
+                start_time = time.time()
+                update = calculator()
+                end_time = time.time()
+                execution_time = end_time - start_time
+                print(f"{name} 执行时间: {execution_time:.4f} 秒")
+                deps.update(update)
             
             # Calculate uncertainty scores for each estimator
             batch_results = []
@@ -232,7 +306,7 @@ class PolygraphCalculator:
                 batch_results.append({})
             
             # Apply each estimator
-            for estimator in self.estimators:
+            for estimator in tqdm(self.estimators):
                 try:
                     uncertainty_scores = estimator(deps)
                     estimator_name = str(estimator)
@@ -387,47 +461,47 @@ class RAGEvaluator:
         naive_response = self._get_response(question)["response"]
         rag_response = self._get_response(question, all_docs_text)["response"]
         
-        # Calculate utility metrics (reductions)
+        # 计算效用指标 (reductions)
         utility = {}
         for metric_name in naive_metrics:
             if metric_name in rag_metrics:
                 reduction_name = f"{metric_name}_reduction"
                 
-                # For entropy-like metrics, naive - rag is the reduction (positive means reduced uncertainty)
-                # For confidence-like metrics, rag - naive is the gain (positive means increased confidence)
+                # 对于类似熵的指标，naive - rag 是减少 (正值表示减少不确定性)
+                # 对于信心类指标，rag - naive 是增益 (正值表示增加信心)
                 if any(entropy_term in metric_name.lower() for entropy_term in ["entropy", "perplexity", "uncertainty"]):
-                    utility[reduction_name] = naive_metrics[metric_name] - rag_metrics[metric_name]
+                    utility[reduction_name] = float(naive_metrics[metric_name]) - float(rag_metrics[metric_name])
                 else:
-                    utility[reduction_name] = rag_metrics[metric_name] - naive_metrics[metric_name]
+                    utility[reduction_name] = float(rag_metrics[metric_name]) - float(naive_metrics[metric_name])
         
-        # Process individual document results
+        # 处理单个文档结果
         individual_doc_results = []
         for i, doc in enumerate(retrieved_docs):
             if i < len(individual_docs_metrics):
                 doc_metrics = individual_docs_metrics[i]
                 
-                # Generate response for individual document
+                # 为单个文档生成响应
                 doc_response = self._get_response(question, individual_doc_texts[i])["response"]
                 
-                # Calculate utility for individual document
+                # 计算单个文档的效用
                 doc_utility = {}
                 for metric_name in naive_metrics:
                     if metric_name in doc_metrics:
                         reduction_name = f"{metric_name}_reduction"
                         
-                        # Same logic as above
+                        # 同样的逻辑
                         if any(entropy_term in metric_name.lower() for entropy_term in ["entropy", "perplexity", "uncertainty"]):
-                            doc_utility[reduction_name] = naive_metrics[metric_name] - doc_metrics[metric_name]
+                            doc_utility[reduction_name] = float(naive_metrics[metric_name]) - float(doc_metrics[metric_name])
                         else:
-                            doc_utility[reduction_name] = doc_metrics[metric_name] - naive_metrics[metric_name]
+                            doc_utility[reduction_name] = float(doc_metrics[metric_name]) - float(naive_metrics[metric_name])
                 
-                # Include retriever score from original data
-                doc_utility["retriever_score"] = doc.get('score', 0.0)
+                # 包含原始数据中的检索器分数
+                doc_utility["retriever_score"] = float(doc.get('score', 0.0))
                 
                 doc_result = {
                     "doc_index": i,
                     "doc_id": doc.get('id', f"doc_{i}"),
-                    "doc_score": doc.get('score', 0.0),
+                    "doc_score": float(doc.get('score', 0.0)),
                     "doc_content": doc.get('contents', ''),
                     "response": doc_response,
                     "metrics": doc_metrics,
@@ -436,7 +510,7 @@ class RAGEvaluator:
                 
                 individual_doc_results.append(doc_result)
         
-        # Build final result
+        # 构建最终结果
         result = {
             "id": item['id'],
             "question": question,
@@ -462,11 +536,59 @@ class RAGEvaluator:
         data = load_dataset(dataset_path)
         if max_samples:
             data = data[:max_samples]
+        
+        # Get output directory and base filename
+        output_dir = os.path.dirname(output_path)
+        base_output_name = os.path.splitext(os.path.basename(output_path))[0]
+        
+        # Check for existing temporary files to determine starting point
+        existing_results = []
+        start_index = 0
+        
+        if os.path.exists(output_dir):
+            # Find all temp files in the directory
+            temp_files = [f for f in os.listdir(output_dir) if f.startswith(f"{base_output_name}_temp_") and f.endswith(".json")]
+            
+            if temp_files:
+                # Extract indices from filenames
+                indices = []
+                for temp_file in temp_files:
+                    try:
+                        # Extract index number from filename (e.g., _temp_42.json -> 42)
+                        idx_str = temp_file.replace(f"{base_output_name}_temp_", "").replace(".json", "")
+                        indices.append(int(idx_str))
+                    except ValueError:
+                        continue
+                
+                if indices:
+                    # Find the highest index
+                    latest_index = max(indices)
+                    tqdm.write(f"Found existing temporary files. Resuming from item {latest_index + 1}")
+                    
+                    # Load the latest temporary file to get existing results
+                    latest_temp_file = f"{base_output_name}_temp_{latest_index}.json"
+                    latest_temp_path = os.path.join(output_dir, latest_temp_file)
+                    
+                    try:
+                        # Use custom JSON loader to handle Infinity values
+                        existing_results = load_dataset(latest_temp_path)
+                        
+                        # Set the starting index for the loop
+                        start_index = latest_index
+                    except Exception as e:
+                        tqdm.write(f"Error loading existing results: {e}")
+                        tqdm.write("Starting from the beginning")
+                        start_index = 0
+                        existing_results = []
+        else:
+            # Create output directory if it doesn't exist
+            os.makedirs(output_dir, exist_ok=True)
+        
+        results = existing_results
 
-        results = []
-
-        # Process one by one
-        for i, item in enumerate(tqdm(data, desc="Processing questions")):
+        # Process from the next unprocessed item
+        for i in range(start_index, len(data)):
+            item = data[i]
             tqdm.write(f"Processing question {i+1}/{len(data)}: {item['question'][:50]}...")
             
             # Process single item
@@ -474,14 +596,14 @@ class RAGEvaluator:
             results.append(result)
             
             # Save intermediate results after each question
-            temp_output_path = f"{os.path.splitext(output_path)[0]}_temp_{i+1}.json"
+            temp_output_path = os.path.join(output_dir, f"{base_output_name}_temp_{i+1}.json")
             tqdm.write(f"Saving intermediate results to {temp_output_path}")
-            with open(temp_output_path, 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False)
+            
+            # Use the custom JSON saver to handle Infinity values
+            save_json_with_infinity(results, temp_output_path)
 
-        # Save final results
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
+        # Save final results with custom JSON saver
+        save_json_with_infinity(results, output_path)
 
         tqdm.write(f"Evaluation complete, results saved to {output_path}")
 
@@ -504,12 +626,12 @@ def main():
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--max_tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.7)
-    parser.add_argument("--model_device", type=str, default="cuda:0",
+    parser.add_argument("--model_device", type=str, default="cuda:4",
                         help="Device for model calculations")
-    parser.add_argument("--gpu_memory_utilization", type=float, default=0.7,
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.9,
                         help="GPU memory utilization for vLLM (0.0 to 1.0)")
-    parser.add_argument("--batch_size", type=int, default=1,
-                        help="Batch size for processing multiple examples")
+    parser.add_argument("--batch_size", type=int, default=12,
+                        help="Batch size for processing scenarios in one question")
 
     args = parser.parse_args()
 
