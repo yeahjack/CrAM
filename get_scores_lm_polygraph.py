@@ -289,7 +289,7 @@ class PolygraphCalculator:
             # Initialize dependencies with input texts
             deps = {"input_texts": batch}
 
-            # 测量每个计算器的执行时间
+            # Measure execution time for each calculator
             calculators = [
                 (
                     "calc_infer_llm",
@@ -521,14 +521,14 @@ class RAGEvaluator:
         naive_response = self._get_response(question)["response"]
         rag_response = self._get_response(question, all_docs_text)["response"]
 
-        # 计算效用指标 (reductions)
+        # Calculate utility metrics (reductions)
         utility = {}
         for metric_name in naive_metrics:
             if metric_name in rag_metrics:
                 reduction_name = f"{metric_name}_reduction"
 
-                # 对于类似熵的指标，naive - rag 是减少 (正值表示减少不确定性)
-                # 对于信心类指标，rag - naive 是增益 (正值表示增加信心)
+                # For entropy-like metrics, naive - rag is reduction (positive value indicates reduced uncertainty)
+                # For confidence-like metrics, rag - naive is gain (positive value indicates increased confidence)
                 if any(
                     entropy_term in metric_name.lower()
                     for entropy_term in ["entropy", "perplexity", "uncertainty"]
@@ -541,24 +541,24 @@ class RAGEvaluator:
                         naive_metrics[metric_name]
                     )
 
-        # 处理单个文档结果
+        # Process individual document results
         individual_doc_results = []
         for i, doc in enumerate(retrieved_docs):
             if i < len(individual_docs_metrics):
                 doc_metrics = individual_docs_metrics[i]
 
-                # 为单个文档生成响应
+                # Generate response for individual document
                 doc_response = self._get_response(question, individual_doc_texts[i])[
                     "response"
                 ]
 
-                # 计算单个文档的效用
+                # Calculate utility for individual document
                 doc_utility = {}
                 for metric_name in naive_metrics:
                     if metric_name in doc_metrics:
                         reduction_name = f"{metric_name}_reduction"
 
-                        # 同样的逻辑
+                        # Same logic as above
                         if any(
                             entropy_term in metric_name.lower()
                             for entropy_term in ["entropy", "perplexity", "uncertainty"]
@@ -571,7 +571,7 @@ class RAGEvaluator:
                                 doc_metrics[metric_name]
                             ) - float(naive_metrics[metric_name])
 
-                # 包含原始数据中的检索器分数
+                # Include retriever score from original data
                 doc_utility["retriever_score"] = float(doc.get("score", 0.0))
 
                 doc_result = {
@@ -586,7 +586,7 @@ class RAGEvaluator:
 
                 individual_doc_results.append(doc_result)
 
-        # 构建最终结果
+        # Build final result
         result = {
             "id": item["id"],
             "question": question,
