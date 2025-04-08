@@ -225,7 +225,7 @@ class PolygraphCalculator:
         self.batch_size = batch_size
 
         # Set up NLI model for semantic metrics
-        self.nli_model = Deberta(device="cuda:1", batch_size=5)
+        self.nli_model = Deberta(device="cuda:3", batch_size=5)
         self.nli_model.setup()
 
         self.initialize_estimators()
